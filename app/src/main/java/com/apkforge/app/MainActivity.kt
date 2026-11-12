@@ -3,13 +3,16 @@ package com.apkforge.app
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.ContentValues
 import android.content.Intent
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.provider.Settings
+import android.provider.MediaStore
 import android.text.InputType
 import android.view.Gravity
 import android.view.MotionEvent
@@ -50,6 +53,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var buildBtn: MaterialButton
     private lateinit var fixBtn: MaterialButton
     private lateinit var undoBtn: MaterialButton
+    private lateinit var downloadBtn: MaterialButton
     private lateinit var installBtn: MaterialButton
     private lateinit var statusView: TextView
     private lateinit var logView: TextView
@@ -177,7 +181,6 @@ class MainActivity : AppCompatActivity() {
 
         root.addView(row(
             btn("Paste") { pasteClipboard() },
-            btn("Add file") { addFileDialog() },
             btn("Clear") { codeInput.setText("") }
         ))
 
@@ -194,6 +197,10 @@ class MainActivity : AppCompatActivity() {
         fixBtn = btn("Fix with AI") { onFixClicked() }
         undoBtn = btn("Undo AI change") { undoAi() }
         root.addView(row(fixBtn, undoBtn))
+
+        downloadBtn = btn("Download APK") { lastApk?.let { saveApkToDownloads(it) } }
+        downloadBtn.visibility = View.GONE
+        root.addView(downloadBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         installBtn = btn("Install APK") { lastApk?.let { installApk(it) } }
         installBtn.visibility = View.GONE
@@ -418,11 +425,11 @@ class MainActivity : AppCompatActivity() {
             if (apk != null) {
                 lastApk = apk
                 lastErrors = null
+                downloadBtn.visibility = View.VISIBLE
                 installBtn.visibility = View.VISIBLE
                 val mb = apk.length() / 1024.0 / 1024.0
-                setStatus("Done! APK ready (%.1f MB).".format(Locale.US, mb))
-                log("APK downloaded. Opening the installer.")
-                installApk(apk)
+                setStatus("Build complete. APK ready (%.1f MB). Choose Download APK or Install APK.".format(Locale.US, mb))
+                log("APK downloaded to APK Forge storage. Installation is now a separate action.")
                 return
             }
             lastErrors = outcome.errors
@@ -617,6 +624,43 @@ class MainActivity : AppCompatActivity() {
     }
 
     // --------------------------------------------------------------------------------- install
+
+    private fun saveApkToDownloads(file: File) {
+        try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, file.name)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "application/vnd.android.package-archive")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+                val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    ?: throw IllegalStateException("Android could not create the Downloads file.")
+                try {
+                    contentResolver.openOutputStream(uri)?.use { output ->
+                        file.inputStream().use { input -> input.copyTo(output) }
+                    } ?: throw IllegalStateException("Could not open the Downloads file.")
+                    values.clear()
+                    values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                    contentResolver.update(uri, values, null, null)
+                } catch (e: Exception) {
+                    contentResolver.delete(uri, null, null)
+                    throw e
+                }
+                toast("APK saved to Downloads/" + file.name)
+            } else {
+                val dir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+                    ?: throw IllegalStateException("Downloads folder is unavailable.")
+                dir.mkdirs()
+                val target = File(dir, file.name)
+                file.copyTo(target, overwrite = true)
+                toast("APK saved to " + target.absolutePath)
+            }
+        } catch (e: Exception) {
+            log("Download error: " + e.message)
+            toast("Could not save APK: " + e.message)
+        }
+    }
 
     private fun installApk(file: File) {
         if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) {

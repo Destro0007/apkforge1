@@ -177,7 +177,7 @@ class GitHub(private val token: String) {
             val arts = JSONObject(get("/repos/$owner/$repo/actions/runs/$runId/artifacts")).getJSONArray("artifacts")
             for (i in 0 until arts.length()) {
                 val a = arts.getJSONObject(i)
-                if (a.optString("name") == "app-debug-apk") {
+                if (a.optString("name") == "APKForge-apk") {
                     artId = a.getLong("id")
                     break
                 }
